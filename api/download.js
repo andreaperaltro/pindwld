@@ -1,6 +1,5 @@
 const archiver = require('archiver');
 
-const BROWSERLESS_URL = 'https://production-sfo.browserless.io/function';
 const TINY_SIZES = ['/75x75/', '/60x60/', '/30x30/', '/140x/', '/170x/', '/200x/', '/236x/', '/240x/', '/280x/', '/300x/', '/364x/'];
 const MIN_WIDTH = 450;
 const MIN_FILE_SIZE = 10240;
@@ -29,56 +28,47 @@ function getExtension(url) {
   }
 }
 
-function getExtractScript() {
-  const tiny = JSON.stringify(TINY_SIZES);
-  const minW = MIN_WIDTH;
-  return `export default async function ({ page, context }) {
-  const boardUrl = (context.boardUrl || '').replace(/^https?:\\/\\/[^/]+/, 'https://www.pinterest.com');
-  await page.goto(boardUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
-  await new Promise(r => setTimeout(r, 3000));
-  await page.waitForSelector('img', { timeout: 10000 }).catch(() => {});
-  try { await page.click('button[aria-label*="Accept"], button[aria-label*="Accetta"]'); } catch {}
-  await new Promise(r => setTimeout(r, 1500));
-  let prev = 0, attempts = 0;
-  while (attempts < 15) {
-    await page.evaluate(() => { window.scrollTo(0, document.body.scrollHeight); });
-    await new Promise(r => setTimeout(r, 1500));
-    const h = await page.evaluate(() => document.body.scrollHeight);
-    if (h === prev) break;
-    prev = h; attempts++;
+function addUrl(urls, raw) {
+  if (!raw || typeof raw !== 'string') return;
+  const m = raw.match(/(https:\/\/i\.pinimg\.com\/[^"'\s\)\?]+)/);
+  if (!m) return;
+  let url = m[1];
+  if (TINY_SIZES.some((s) => url.includes(s))) return;
+  const dimMatch = url.match(/\/(\d+)x(\d*)\//);
+  if (dimMatch && parseInt(dimMatch[1], 10) < MIN_WIDTH) return;
+  if (url.includes('/originals/')) {
+    urls.add(url);
+  } else {
+    url = url.replace(/\/\d+x\d*\//g, '/originals/').replace(/\/\d+x\//g, '/originals/');
+    urls.add(url);
   }
-  const urls = await page.evaluate(({ tiny, minW }) => {
-    const s = new Set();
-    function add(raw) {
-      if (!raw || typeof raw !== 'string') return;
-      const m = raw.match(/(https:\\/\\/i\\.pinimg\\.com\\/[^"'\\s\\)\\?]+)/);
-      if (!m) return;
-      let u = m[1];
-      if (tiny.some(t => u.includes(t))) return;
-      const dim = u.match(/\\/(\\d+)x(\\d*)\\//);
-      if (dim && parseInt(dim[1], 10) < minW) return;
-      if (u.includes('/originals/')) s.add(u);
-      else s.add(u.replace(/\\/\\d+x\\d*\\//g, '/originals/').replace(/\\/\\d+x\\//g, '/originals/'));
-    }
-    document.querySelectorAll('img').forEach(i => { add(i.src); add(i.currentSrc); add(i.dataset?.src); add(i.dataset?.lazySrc); if (i.srcset) i.srcset.split(',').forEach(p => add(p.trim().split(/\\s+/)[0])); });
-    document.querySelectorAll('[src*="pinimg.com"], [href*="pinimg.com"]').forEach(e => add(e.src || e.href));
-    const html = document.documentElement.innerHTML;
-    for (const m of html.matchAll(/https:\\/\\/i\\.pinimg\\.com\\/[^"'\\s\\)\\\\]+/g)) add(m[0]);
-    return Array.from(s).filter(u => u && u.startsWith('https://'));
-  }, { tiny: ${tiny}, minW: ${minW} });
-  return { data: { urls }, type: 'application/json' };
-}`;
 }
 
-async function extractUrls(boardUrl, token) {
-  const res = await fetch(`${BROWSERLESS_URL}?token=${token}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code: getExtractScript(), context: { boardUrl } }),
+function extractUrlsFromHtml(html) {
+  const urls = new Set();
+  for (const m of html.matchAll(/https:\/\/i\.pinimg\.com\/[^"'\s\)\\]+/g)) {
+    addUrl(urls, m[0]);
+  }
+  const jsonMatches = html.matchAll(/"url"\s*:\s*"(https:\/\/i\.pinimg\.com\/[^"]+)"/g);
+  for (const m of jsonMatches) addUrl(urls, m[1]);
+  const origMatches = html.matchAll(/"(https:\/\/i\.pinimg\.com\/originals\/[^"]+)"/g);
+  for (const m of origMatches) addUrl(urls, m[1]);
+  return Array.from(urls).filter((u) => u && u.startsWith('https://'));
+}
+
+async function extractUrls(boardUrl) {
+  const url = boardUrl.replace(/^https?:\/\/[^/]+/, 'https://www.pinterest.com');
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+    redirect: 'follow',
   });
-  if (!res.ok) throw new Error(`Browserless: ${res.status}`);
-  const json = await res.json();
-  return json.data?.urls || json.urls || [];
+  if (!res.ok) throw new Error(`Failed to fetch board (${res.status})`);
+  const html = await res.text();
+  return extractUrlsFromHtml(html);
 }
 
 async function downloadImage(url) {
@@ -102,13 +92,6 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const token = process.env.BROWSERLESS_API_KEY;
-  if (!token) {
-    return res.status(503).json({
-      error: 'Server not configured. Add BROWSERLESS_API_KEY to Vercel environment variables.',
-    });
-  }
-
   const { boardUrl } = req.body || {};
 
   if (!boardUrl) {
@@ -122,7 +105,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const urls = await extractUrls(boardUrl, token);
+    const urls = await extractUrls(boardUrl);
     const seen = new Set();
     const images = [];
 
@@ -136,7 +119,7 @@ module.exports = async function handler(req, res) {
 
     if (images.length === 0) {
       return res.status(502).json({
-        error: 'No images could be downloaded. The board may be private or Pinterest may be blocking access.',
+        error: 'No images found. Pinterest loads boards with JavaScript—use the local version (npm start) or Railway for full support.',
       });
     }
 
@@ -157,4 +140,4 @@ module.exports = async function handler(req, res) {
       });
     }
   }
-}
+};

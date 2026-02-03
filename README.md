@@ -15,8 +15,9 @@ Open http://localhost:3000
 ## Deploy to Vercel (free)
 
 1. Push to GitHub and import the repo in [Vercel](https://vercel.com)
-2. Add environment variable: **BROWSERLESS_API_KEY** = your token from [browserless.io](https://browserless.io) (free tier: 1000 units/month)
-3. Deploy
+2. Deploy — no API keys or config needed
+
+Note: Pinterest loads most content with JavaScript. The Vercel version uses plain HTTP fetch and may find fewer images. For full support, run locally (`npm start`) or deploy to Railway.
 
 ## Deploy to Railway
 
