@@ -2,28 +2,25 @@
 
 A web app that downloads all images from a Pinterest board as a ZIP file.
 
-## Setup
+## Local development
 
 ```bash
 npm install
 npx playwright install chromium
-```
-
-## Run
-
-```bash
 npm start
 ```
 
-Open http://localhost:3000, paste a Pinterest board URL, and click **Download images**.
+Open http://localhost:3000
+
+## Deploy to Vercel (free)
+
+1. Push to GitHub and import the repo in [Vercel](https://vercel.com)
+2. Add environment variable: **BROWSERLESS_API_KEY** = your token from [browserless.io](https://browserless.io) (free tier: 1000 units/month)
+3. Deploy
 
 ## Deploy to Railway
 
-1. Push this repo to GitHub
-2. Go to [railway.app](https://railway.app) and sign in
-3. **New Project** → **Deploy from GitHub repo** → select `pindwld`
-4. Railway will detect the Dockerfile and deploy
-5. Click **Settings** → **Generate Domain** to get your public URL
+Use the Dockerfile for platforms that support it (Railway, Render, Fly.io).
 
 ## Requirements
 
